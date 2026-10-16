@@ -1,3 +1,32 @@
+
+# Virtuelle Python-Umgebungen
 .venv/
+venv/
+
+# Python-Cache-Dateien
 __pycache__/
-.ipynb_checkpoints/
+*.py[cod]
+
+# Lokale Einstellungen und Umgebungsvariablen
+.env
+.env.*
+.idea/
+.vscode/
+
+# SQLite-Datenbanken
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Originaldaten und bereinigte Daten
+data/raw/*
+data/processed/*
+
+# Ordnerstruktur erhalten
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+
+# Temporäre Dateien
+*.log
+.DS_Store
