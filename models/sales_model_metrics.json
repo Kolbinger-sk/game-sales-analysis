@@ -1,0 +1,53 @@
+{
+  "model_name": "RandomForestRegressor",
+  "model_status": "experimental",
+  "trained_at_utc": "2026-10-17T14:21:00.346688+00:00",
+  "data_source": "data\\processed\\vgsales_clean.csv",
+  "feature_columns": [
+    "Platform",
+    "Genre",
+    "Year"
+  ],
+  "target_column": "Global_Sales",
+  "target_unit": "million_copies",
+  "year_range": {
+    "start": 1980,
+    "end": 2016
+  },
+  "split": {
+    "method": "GroupShuffleSplit",
+    "group_column": "Name",
+    "test_size": 0.2,
+    "random_state": 42,
+    "training_records": 13059,
+    "test_records": 3264,
+    "training_titles": 9084,
+    "test_titles": 2272
+  },
+  "total_valid_records": 16323,
+  "model_parameters": {
+    "n_estimators": 200,
+    "min_samples_leaf": 3,
+    "random_state": 42
+  },
+  "evaluation": {
+    "baseline": {
+      "MAE": 0.5849862942918188,
+      "RMSE": 1.3396509294987538,
+      "R2": -0.00042661365666885054
+    },
+    "random_forest": {
+      "MAE": 0.5483542768035674,
+      "RMSE": 1.339968538125531,
+      "R2": -0.0009010384218699485
+    }
+  },
+  "sklearn_version": "1.9.1",
+  "limitations": [
+    "Single grouped holdout evaluation",
+    "No temporal generalization test",
+    "Historical dataset with incomplete market coverage",
+    "Only platform, genre, and release year used as features",
+    "Estimates are not calibrated prediction intervals"
+  ]
+}

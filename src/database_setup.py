@@ -1,187 +1,214 @@
 
-# ============================================================
-# GAME SALES ANALYTICS
-# MODUL: DATABASE SETUP
-# ============================================================
-#
-# Ziel:
-#   Eine SQLite-Datenbank erstellen und unsere
-#   bereinigten Videospieldaten darin speichern.
-#
-# ============================================================
-
-
-# ============================================================
-# 1. BIBLIOTHEKEN IMPORTIEREN
-# ============================================================
-
-# sqlite3:
-#   Gehört zur Python-Standardbibliothek.
-#
-#   Damit können wir SQLite-Datenbanken erstellen,
-#   SQL-Abfragen ausführen und Daten speichern.
+"""Create and validate the SQLite database for Game Sales Analytics."""
 
 import sqlite3
-
-# Pandas:
-#   Damit lesen wir unsere bereinigte CSV-Datei ein.
+from pathlib import Path
 
 import pandas as pd
 
-# Path:
-#   Hilft beim Arbeiten mit Dateipfaden.
-
-from pathlib import Path
-
-
-# ============================================================
-# 2. DATEIPFADE FESTLEGEN
-# ============================================================
-
-# Projekt-Hauptordner bestimmen.
-#
-# database_setup.py befindet sich in "src".
-# Deshalb gehen wir zwei Ebenen nach oben.
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-
-# Pfad unserer bereinigten CSV-Datei.
-
-CSV_PATH = (
-    BASE_DIR / "data" / "processed" / "vgsales_clean.csv"
-)
-
-
-# Speicherort unserer SQLite-Datenbank.
-#
-# Die Datenbank wird als Datei games.db gespeichert.
-
+DATA_PATH = BASE_DIR / "data" / "processed" / "vgsales_clean.csv"
 DATABASE_PATH = BASE_DIR / "database" / "games.db"
 
+TABLE_NAME = "games"
 
-# Ordner erstellen, falls er nicht existiert.
+REQUIRED_COLUMNS = [
+    "Rank",
+    "Name",
+    "Platform",
+    "Year",
+    "Genre",
+    "Publisher",
+    "NA_Sales",
+    "EU_Sales",
+    "JP_Sales",
+    "Other_Sales",
+    "Global_Sales",
+]
 
-DATABASE_PATH.parent.mkdir(
-    parents=True,
-    exist_ok=True
-)
-
-
-# ============================================================
-# 3. BEREINIGTE DATEN LADEN
-# ============================================================
-
-print("\n=== DATENBANK-EINRICHTUNG ===")
-
-
-# CSV-Datei in einen Pandas-DataFrame laden.
-
-df = pd.read_csv(CSV_PATH)
-
-
-# Anzahl der geladenen Spiele ausgeben.
-
-print("Geladene Spiele:", len(df))
-
-
-# ============================================================
-# 4. VERBINDUNG ZUR DATENBANK HERSTELLEN
-# ============================================================
-
-# connect():
-#   Öffnet eine Verbindung zu unserer SQLite-Datenbank.
-#
-# Wenn games.db noch nicht existiert,
-# erstellt SQLite die Datei automatisch.
-#
-# Die Verbindung speichern wir in "connection".
-
-connection = sqlite3.connect(DATABASE_PATH)
+SALES_COLUMNS = [
+    "NA_Sales",
+    "EU_Sales",
+    "JP_Sales",
+    "Other_Sales",
+    "Global_Sales",
+]
 
 
-# ============================================================
-# 5. DATEN IN SQLITE SPEICHERN
-# ============================================================
+def load_cleaned_data(file_path: Path) -> pd.DataFrame:
+    """Load the cleaned dataset and validate its structure."""
+    if not file_path.is_file():
+        raise FileNotFoundError(
+            f"Cleaned dataset not found: {file_path}"
+        )
 
-# to_sql():
-#   Überträgt unseren Pandas-DataFrame
-#   in eine SQL-Datenbanktabelle.
-#
-# name="games":
-#   Die Tabelle erhält den Namen "games".
-#
-# con=connection:
-#   Gibt die Datenbankverbindung an.
-#
-# if_exists="replace":
-#   Falls die Tabelle bereits existiert,
-#   wird sie gelöscht und neu erstellt.
-#
-#   ACHTUNG:
-#   Dabei werden bisherige Inhalte dieser
-#   Tabelle überschrieben!
-#
-# index=False:
-#   Verhindert, dass zusätzliche Pandas-
-#   Zeilennummern gespeichert werden.
+    df = pd.read_csv(file_path)
 
-df.to_sql(
-    name="games",
-    con=connection,
-    if_exists="replace",
-    index=False
-)
+    if df.empty:
+        raise ValueError("The cleaned dataset is empty.")
+
+    missing_columns = [
+        column
+        for column in REQUIRED_COLUMNS
+        if column not in df.columns
+    ]
+
+    if missing_columns:
+        raise ValueError(
+            f"Missing required columns: {missing_columns}"
+        )
+
+    return df
 
 
-# ============================================================
-# 6. DATENBANK ÜBERPRÜFEN
-# ============================================================
+def validate_sales_data(df: pd.DataFrame) -> pd.DataFrame:
+    """Validate sales values and normalize numeric column types."""
+    validated = df.copy()
 
-# SQL-Abfrage:
-#
-# SELECT COUNT(*)
-#   Zählt alle Zeilen einer Tabelle.
-#
-# FROM games
-#   Legt fest, aus welcher Tabelle
-#   die Daten gelesen werden sollen.
+    for column in SALES_COLUMNS:
+        validated[column] = pd.to_numeric(
+            validated[column],
+            errors="coerce",
+        )
 
-query = "SELECT COUNT(*) FROM games"
+    if validated[SALES_COLUMNS].isna().any().any():
+        raise ValueError(
+            "The dataset contains missing or invalid sales values."
+        )
 
+    if validated[SALES_COLUMNS].lt(0).any().any():
+        raise ValueError(
+            "The dataset contains negative sales values."
+        )
 
-# read_sql_query():
-#   Führt eine SQL-Abfrage aus und
-#   speichert das Ergebnis als DataFrame.
+    validated["Year"] = pd.to_numeric(
+        validated["Year"],
+        errors="coerce",
+    )
 
-result = pd.read_sql_query(
-    query,
-    connection
-)
-
-
-print("\n=== SPIELE IN DER DATENBANK ===")
-
-print(result)
+    return validated
 
 
-# ============================================================
-# 7. DATENBANKVERBINDUNG SCHLIESSEN
-# ============================================================
+def create_database(
+    df: pd.DataFrame,
+    database_path: Path,
+) -> None:
+    """Replace the games table with the validated dataset."""
+    database_path.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
 
-# close():
-#   Schließt unsere Datenbankverbindung.
-#
-# Das ist wichtig, damit verwendete
-# Ressourcen wieder freigegeben werden.
+    connection = sqlite3.connect(database_path)
 
-connection.close()
+    try:
+        df.to_sql(
+            name=TABLE_NAME,
+            con=connection,
+            if_exists="replace",
+            index=False,
+        )
+
+        connection.commit()
+
+    except Exception:
+        connection.rollback()
+        raise
+
+    finally:
+        connection.close()
 
 
-# ============================================================
-# 8. PROGRAMMENDE
-# ============================================================
+def verify_database(
+    database_path: Path,
+    expected_records: int,
+) -> None:
+    """Verify record counts and essential database statistics."""
+    connection = sqlite3.connect(database_path)
 
-print("\nDatenbank erfolgreich erstellt!")
+    try:
+        query = """
+            SELECT
+                COUNT(*) AS record_count,
+                COUNT(DISTINCT Platform) AS platform_count,
+                COUNT(DISTINCT Genre) AS genre_count,
+                COUNT(Year) AS records_with_year,
+                SUM(Global_Sales) AS total_global_sales
+            FROM games;
+        """
 
-print("Speicherort:", DATABASE_PATH)
+        result = pd.read_sql_query(
+            query,
+            connection,
+        )
+
+    finally:
+        connection.close()
+
+    actual_records = int(
+        result.loc[0, "record_count"]
+    )
+
+    if actual_records != expected_records:
+        raise ValueError(
+            "Database verification failed: "
+            f"expected {expected_records} records, "
+            f"found {actual_records}."
+        )
+
+    print("\nDatabase verification")
+    print("-" * 50)
+
+    print(f"Records: {actual_records:,}")
+
+    print(
+        "Platforms:",
+        int(result.loc[0, "platform_count"]),
+    )
+
+    print(
+        "Genres:",
+        int(result.loc[0, "genre_count"]),
+    )
+
+    print(
+        "Records with release year:",
+        int(result.loc[0, "records_with_year"]),
+    )
+
+    print(
+        "Global sales (million copies):",
+        f"{result.loc[0, 'total_global_sales']:,.2f}",
+    )
+
+
+def main() -> None:
+    """Build and verify the SQLite database."""
+    print("=" * 60)
+    print("GAME SALES ANALYTICS - DATABASE SETUP")
+    print("=" * 60)
+
+    df = load_cleaned_data(DATA_PATH)
+
+    validated_df = validate_sales_data(df)
+
+    print(f"\nSource records: {len(validated_df):,}")
+
+    create_database(
+        df=validated_df,
+        database_path=DATABASE_PATH,
+    )
+
+    verify_database(
+        database_path=DATABASE_PATH,
+        expected_records=len(validated_df),
+    )
+
+    print("\nDatabase setup completed successfully.")
+    print(f"Database location: {DATABASE_PATH}")
+
+
+if __name__ == "__main__":
+    main()

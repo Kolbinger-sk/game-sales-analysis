@@ -1,32 +1,67 @@
 
-# Virtuelle Python-Umgebungen
-.venv/
-venv/
-
-# Python-Cache-Dateien
+# Python bytecode and cache files
 __pycache__/
 *.py[cod]
+*$py.class
 
-# Lokale Einstellungen und Umgebungsvariablen
-.env
-.env.*
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Python packaging and build artifacts
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Test and coverage artifacts
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+
+# Type checking and linting caches
+.mypy_cache/
+.ruff_cache/
+.pyre/
+
+# IDE and editor settings
 .idea/
 .vscode/
+*.iml
 
-# SQLite-Datenbanken
-*.db
-*.db-journal
-*.db-wal
-*.db-shm
-
-# Originaldaten und bereinigte Daten
-data/raw/*
-data/processed/*
-
-# Ordnerstruktur erhalten
-!data/raw/.gitkeep
-!data/processed/.gitkeep
-
-# Temporäre Dateien
-*.log
+# Operating system files
 .DS_Store
+Thumbs.db
+desktop.ini
+
+# Environment variables and local secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Raw and generated datasets
+data/raw/*.csv
+data/processed/*.csv
+
+# Local SQLite databases
+database/*.db
+database/*.db-journal
+database/*.db-wal
+database/*.db-shm
+
+# Generated machine learning artifacts
+models/*.joblib
+
+# Temporary and log files
+*.log
+*.tmp
+*.bak
+*~
+  

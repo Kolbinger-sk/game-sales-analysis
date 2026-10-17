@@ -1,592 +1,529 @@
 
-# ============================================================
-# GAME SALES ANALYTICS
-# MODUL: SQL ANALYSIS
-# ============================================================
-#
-# Projekt:
-#   Analyse weltweiter Videospiel-Verkaufszahlen
-#
-# Aufgabe dieses Moduls:
-#   Daten aus unserer SQLite-Datenbank auslesen,
-#   filtern, gruppieren und statistisch analysieren.
-#
-# Verwendete Bibliotheken:
-#   - sqlite3: Verbindung zur SQLite-Datenbank
-#   - pandas: Darstellung der SQL-Ergebnisse
-#   - pathlib: Verwaltung der Dateipfade
-#
-# Folgende SQL-Funktionen lernen wir:
-#   1. SELECT
-#   2. FROM
-#   3. WHERE
-#   4. ORDER BY
-#   5. LIMIT
-#   6. COUNT()
-#   7. SUM()
-#   8. GROUP BY
-#   9. AVG()
-#   10. HAVING
-#   11. AND
-#   12. ROUND()
-#
-# ============================================================
+"""SQL-based sales analysis for Game Sales Analytics.
 
+This module executes predefined analytical queries against the
+SQLite database and presents results as structured reports.
 
-# ============================================================
-# 1. BIBLIOTHEKEN IMPORTIEREN
-# ============================================================
-
-# sqlite3:
-#   Gehört zur Python-Standardbibliothek.
-#
-#   Ermöglicht das Verbinden mit SQLite-Datenbanken
-#   und das Ausführen von SQL-Abfragen.
+All sales figures represent historical estimates in millions
+of copies. Game records refer to game-platform entries rather
+than necessarily unique game titles.
+"""
 
 import sqlite3
-
-
-# pandas:
-#   Ermöglicht uns, die Ergebnisse unserer
-#   SQL-Abfragen als Tabellen darzustellen.
-#
-#   "pd" ist der übliche Alias für pandas.
+from pathlib import Path
+from typing import Any
 
 import pandas as pd
 
 
-# pathlib:
-#   Stellt die Klasse Path bereit.
-#
-#   Damit können wir Dateipfade unabhängig
-#   vom verwendeten Betriebssystem erstellen.
-
-from pathlib import Path
-
-
-# ============================================================
-# 2. PROJEKTPFADE DEFINIEREN
-# ============================================================
-
-# __file__:
-#   Enthält den Dateipfad der aktuellen Python-Datei.
-#
-# resolve():
-#   Wandelt den Pfad in einen absoluten Pfad um.
-#
-# parent:
-#   Gibt den übergeordneten Ordner zurück.
-#
-# parent.parent:
-#   Geht zwei Verzeichnisebenen nach oben.
-#
-# Da sql_analysis.py im Ordner src liegt,
-# gelangen wir so zum Hauptordner unseres Projekts.
+# ---------------------------------------------------------------------
+# Project configuration
+# ---------------------------------------------------------------------
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-
-# DATABASE_PATH:
-#   Speichert den vollständigen Pfad zu unserer
-#   SQLite-Datenbank games.db.
-#
-# Die Datenbank liegt im Unterordner database/.
-
 DATABASE_PATH = BASE_DIR / "database" / "games.db"
 
+TABLE_NAME = "games"
 
-# ============================================================
-# 3. DATENBANKDATEI ÜBERPRÜFEN
-# ============================================================
+DEFAULT_LIMIT = 10
 
-# exists():
-#   Prüft, ob eine Datei oder ein Ordner existiert.
-#
-# Wenn die Datenbank nicht gefunden wird,
-# geben wir eine verständliche Fehlermeldung aus.
-#
-# Das ist wichtig, weil sqlite3.connect()
-# sonst unter Umständen eine neue leere
-# Datenbank erstellen würde.
 
-if not DATABASE_PATH.is_file():
+# ---------------------------------------------------------------------
+# Database access and validation
+# ---------------------------------------------------------------------
 
-    raise FileNotFoundError(
-        f"Die Datenbank wurde nicht gefunden: {DATABASE_PATH}"
+def connect_database(database_path: Path) -> sqlite3.Connection:
+    """Open an existing SQLite database in read-only mode.
+
+    Args:
+        database_path: Absolute path to the SQLite database.
+
+    Returns:
+        An active read-only SQLite connection.
+
+    Raises:
+        FileNotFoundError: If the database does not exist.
+        sqlite3.Error: If the database cannot be opened.
+    """
+    if not database_path.is_file():
+        raise FileNotFoundError(
+            f"SQLite database not found: {database_path}"
+        )
+
+    # Read-only access prevents analysis queries from modifying
+    # the database or creating a new database file.
+    database_uri = database_path.resolve().as_uri() + "?mode=ro"
+
+    return sqlite3.connect(
+        database_uri,
+        uri=True,
     )
 
 
-# ============================================================
-# 4. DATENBANKVERBINDUNG HERSTELLEN
-# ============================================================
-
-# sqlite3.connect():
-#   Öffnet eine Verbindung zu unserer Datenbank.
-#
-# Die Verbindung speichern wir in der
-# Variable "connection".
-#
-# Über diese Verbindung können wir
-# SQL-Abfragen ausführen.
-
-connection = sqlite3.connect(DATABASE_PATH)
-
-
-print("\n========================================")
-print("GAME SALES ANALYTICS - SQL")
-print("========================================")
-
-print("\n=== SQL-ANALYSE GESTARTET ===")
-
-
-# ============================================================
-# 5. SQL-ABFRAGEN AUSFÜHREN
-# ============================================================
-
-# try:
-#   Beginnt einen Codeabschnitt, in dem
-#   unsere SQL-Abfragen durchgeführt werden.
-#
-# finally:
-#   Wird am Ende immer ausgeführt,
-#   auch wenn innerhalb des try-Blocks
-#   ein Fehler auftritt.
-#
-# So stellen wir sicher, dass die
-# Datenbankverbindung geschlossen wird.
-
-try:
-
-    # ========================================================
-    # ANALYSE 1: DIE ERSTEN 10 SPIELE
-    # ========================================================
-
-    # SELECT *:
-    #   Wählt alle Spalten unserer Tabelle aus.
-    #
-    # FROM games:
-    #   Legt die Tabelle fest.
-    #
-    # ORDER BY Rank:
-    #   Sortiert nach der ursprünglichen Rangfolge.
-    #
-    # LIMIT 10:
-    #   Gibt maximal zehn Zeilen zurück.
-
-    query = """
-    SELECT *
-    FROM games
-    ORDER BY Rank ASC
-    LIMIT 10;
+def validate_database(connection: sqlite3.Connection) -> None:
+    """Verify that the required games table and columns exist."""
+    table_query = """
+        SELECT COUNT(*)
+        FROM sqlite_master
+        WHERE type = 'table'
+          AND name = ?;
     """
 
-    # read_sql_query():
-    #   Führt unsere SQL-Abfrage aus.
-    #
-    # Das Ergebnis wird als Pandas-DataFrame
-    # gespeichert.
-
-    result = pd.read_sql_query(
-        query,
-        connection
+    cursor = connection.execute(
+        table_query,
+        (TABLE_NAME,),
     )
 
-    print("\n=== ERSTE 10 SPIELE ===")
-    print(result)
+    table_exists = cursor.fetchone()[0] > 0
+
+    if not table_exists:
+        raise ValueError(
+            f"Required table '{TABLE_NAME}' was not found."
+        )
+
+    required_columns = {
+        "Rank",
+        "Name",
+        "Platform",
+        "Year",
+        "Genre",
+        "Publisher",
+        "NA_Sales",
+        "EU_Sales",
+        "JP_Sales",
+        "Other_Sales",
+        "Global_Sales",
+    }
+
+    # PRAGMA table_info returns the column definitions
+    # of the validated, fixed table name.
+    cursor = connection.execute(
+        "PRAGMA table_info(games);"
+    )
+
+    existing_columns = {
+        row[1]
+        for row in cursor.fetchall()
+    }
+
+    missing_columns = (
+        required_columns - existing_columns
+    )
+
+    if missing_columns:
+        raise ValueError(
+            "Database schema is incomplete. "
+            f"Missing columns: {sorted(missing_columns)}"
+        )
 
 
-    # ========================================================
-    # ANALYSE 2: TOP 10 PS2-SPIELE
-    # ========================================================
+def execute_query(
+    connection: sqlite3.Connection,
+    query: str,
+    parameters: tuple[Any, ...] = (),
+) -> pd.DataFrame:
+    """Execute a parameterized SQL query and return a DataFrame.
 
-    # Wir suchen die zehn meistverkauften Spieleinträge
-    # für die PlayStation 2.
-    #
-    # WHERE Platform = 'PS2':
-    #   Filtert nach der gewünschten Plattform.
-    #
-    # ORDER BY Global_Sales DESC:
-    #   Sortiert die Verkäufe absteigend.
-    #
-    # LIMIT 10:
-    #   Begrenzt das Ergebnis auf zehn Spiele.
+    Args:
+        connection: Active SQLite database connection.
+        query: SQL SELECT statement to execute.
+        parameters: Values bound to SQL placeholders.
+
+    Returns:
+        Query results as a pandas DataFrame.
+    """
+    return pd.read_sql_query(
+        sql=query,
+        con=connection,
+        params=parameters,
+    )
+
+
+# ---------------------------------------------------------------------
+# Game-level queries
+# ---------------------------------------------------------------------
+
+def get_first_games(
+    connection: sqlite3.Connection,
+    limit: int = DEFAULT_LIMIT,
+) -> pd.DataFrame:
+    """Return the first game entries ordered by dataset rank."""
+    if limit < 1:
+        raise ValueError("The result limit must be positive.")
 
     query = """
-    SELECT
-        Name,
-        Platform,
-        Year,
-        Global_Sales
-    FROM games
-    WHERE Platform = 'PS2'
-    ORDER BY Global_Sales DESC
-    LIMIT 10;
+        SELECT *
+        FROM games
+        ORDER BY Rank ASC
+        LIMIT ?;
     """
 
-    result = pd.read_sql_query(
+    return execute_query(
+        connection,
         query,
-        connection
+        (limit,),
     )
 
-    print("\n=== TOP 10 PS2-SPIELE ===")
-    print(result)
 
-
-    # ========================================================
-    # ANALYSE 3: VERKÄUFE NACH GENRE
-    # ========================================================
-
-    # GROUP BY Genre:
-    #   Gruppiert alle Spiele nach ihrem Genre.
-    #
-    # COUNT(*):
-    #   Zählt die Spieleinträge pro Genre.
-    #
-    # SUM(Global_Sales):
-    #   Addiert die Verkaufszahlen innerhalb
-    #   jeder Genre-Gruppe.
-    #
-    # ROUND(..., 2):
-    #   Rundet die Ergebnisse auf zwei Nachkommastellen.
-    #
-    # AS Total_Sales:
-    #   Vergibt einen Namen für die neue Ergebnisspalte.
-    #
-    # ORDER BY Total_Sales DESC:
-    #   Sortiert nach den höchsten Gesamtverkäufen.
+def get_top_games_by_platform(
+    connection: sqlite3.Connection,
+    platform: str,
+    limit: int = DEFAULT_LIMIT,
+) -> pd.DataFrame:
+    """Return the highest-selling game entries for a platform."""
+    if limit < 1:
+        raise ValueError("The result limit must be positive.")
 
     query = """
-    SELECT
-        Genre,
-        COUNT(*) AS Game_Count,
-        ROUND(SUM(Global_Sales), 2) AS Total_Sales
-    FROM games
-    GROUP BY Genre
-    ORDER BY Total_Sales DESC;
+        SELECT
+            Name,
+            Platform,
+            Year,
+            Global_Sales
+        FROM games
+        WHERE Platform = ?
+        ORDER BY Global_Sales DESC
+        LIMIT ?;
     """
 
-    result = pd.read_sql_query(
+    return execute_query(
+        connection,
         query,
-        connection
+        (platform, limit),
     )
 
-    print("\n=== VERKÄUFE NACH GENRE ===")
-    print(result)
 
-
-    # ========================================================
-    # ANALYSE 4: TOP 10 SPIELE WELTWEIT
-    # ========================================================
-
-    # Wir suchen die zehn Spieleinträge
-    # mit den höchsten weltweiten Verkaufszahlen.
-    #
-    # SELECT:
-    #   Wählt nur die benötigten Spalten.
-    #
-    # ORDER BY Global_Sales DESC:
-    #   Die höchsten Verkaufszahlen stehen zuerst.
-    #
-    # LIMIT 10:
-    #   Gibt maximal zehn Spiele zurück.
-    #
-    # Hinweis:
-    #   Ein Spiel kann auf mehreren Plattformen
-    #   als separater Datensatz vorkommen.
+def get_top_global_games(
+    connection: sqlite3.Connection,
+    limit: int = DEFAULT_LIMIT,
+) -> pd.DataFrame:
+    """Return the highest-selling game-platform entries globally."""
+    if limit < 1:
+        raise ValueError("The result limit must be positive.")
 
     query = """
-    SELECT
-        Name,
-        Platform,
-        Genre,
-        Global_Sales
-    FROM games
-    ORDER BY Global_Sales DESC
-    LIMIT 10;
+        SELECT
+            Name,
+            Platform,
+            Genre,
+            Global_Sales
+        FROM games
+        ORDER BY Global_Sales DESC
+        LIMIT ?;
     """
 
-    result = pd.read_sql_query(
+    return execute_query(
+        connection,
         query,
-        connection
+        (limit,),
     )
 
-    print("\n=== TOP 10 SPIELE WELTWEIT ===")
-    print(result)
 
-
-    # ========================================================
-    # ANALYSE 5: DURCHSCHNITTLICHE VERKÄUFE PRO GENRE
-    # ========================================================
-
-    # AVG():
-    #   Berechnet den Durchschnitt einer Spalte.
-    #
-    # In unserem Fall berechnen wir:
-    #
-    #   Gesamtverkäufe des Genres
-    #   ------------------------
-    #   Anzahl der Spieleinträge
-    #
-    # Dadurch erkennen wir, wie viele Millionen
-    # Exemplare ein Spieleintrag eines Genres
-    # durchschnittlich verkauft hat.
-    #
-    # ROUND(AVG(Global_Sales), 2):
-    #   Rundet den Durchschnitt auf zwei Stellen.
-    #
-    # GROUP BY Genre:
-    #   Berechnet einen Durchschnitt pro Genre.
+def get_filtered_games(
+    connection: sqlite3.Connection,
+    platform: str,
+    genre: str,
+    start_year: int,
+    limit: int = DEFAULT_LIMIT,
+) -> pd.DataFrame:
+    """Return top-selling games matching platform, genre and year."""
+    if limit < 1:
+        raise ValueError("The result limit must be positive.")
 
     query = """
-    SELECT
-        Genre,
-        COUNT(*) AS Game_Count,
-        ROUND(AVG(Global_Sales), 2) AS Average_Sales
-    FROM games
-    GROUP BY Genre
-    ORDER BY Average_Sales DESC;
+        SELECT
+            Name,
+            Platform,
+            Year,
+            Genre,
+            Global_Sales
+        FROM games
+        WHERE Platform = ?
+          AND Genre = ?
+          AND Year >= ?
+        ORDER BY Global_Sales DESC
+        LIMIT ?;
     """
 
-    result = pd.read_sql_query(
+    return execute_query(
+        connection,
         query,
-        connection
+        (
+            platform,
+            genre,
+            start_year,
+            limit,
+        ),
     )
 
-    print("\n=== DURCHSCHNITTLICHE VERKÄUFE PRO GENRE ===")
-    print(result)
+
+# ---------------------------------------------------------------------
+# Genre-level queries
+# ---------------------------------------------------------------------
+
+def get_genre_sales(
+    connection: sqlite3.Connection,
+) -> pd.DataFrame:
+    """Calculate game counts and total global sales by genre."""
+    query = """
+        SELECT
+            Genre,
+            COUNT(*) AS Game_Count,
+            ROUND(SUM(Global_Sales), 2) AS Total_Sales
+        FROM games
+        GROUP BY Genre
+        ORDER BY Total_Sales DESC;
+    """
+
+    return execute_query(
+        connection,
+        query,
+    )
 
 
-    # ========================================================
-    # ANALYSE 6: GENRES MIT MINDESTENS 1000 SPIELEN
-    # ========================================================
+def get_genre_average_sales(
+    connection: sqlite3.Connection,
+) -> pd.DataFrame:
+    """Calculate average global sales per game entry by genre."""
+    query = """
+        SELECT
+            Genre,
+            COUNT(*) AS Game_Count,
+            ROUND(AVG(Global_Sales), 2) AS Average_Sales
+        FROM games
+        GROUP BY Genre
+        ORDER BY Average_Sales DESC;
+    """
 
-    # HAVING:
-    #   Filtert bereits gruppierte Ergebnisse.
-    #
-    # Unterschied zwischen WHERE und HAVING:
-    #
-    # WHERE:
-    #   Filtert einzelne Zeilen VOR der Gruppierung.
-    #
-    # HAVING:
-    #   Filtert Gruppen NACH der Gruppierung.
-    #
-    # HAVING COUNT(*) >= 1000:
-    #   Es werden nur Genres berücksichtigt,
-    #   die mindestens 1000 Spieleinträge besitzen.
-    #
-    # SUM(Global_Sales):
-    #   Addiert die Verkäufe dieser Genres.
+    return execute_query(
+        connection,
+        query,
+    )
+
+
+def get_genres_with_minimum_games(
+    connection: sqlite3.Connection,
+    minimum_games: int = 1000,
+) -> pd.DataFrame:
+    """Return genre sales statistics above a minimum record count."""
+    if minimum_games < 1:
+        raise ValueError(
+            "The minimum number of games must be positive."
+        )
 
     query = """
-    SELECT
-        Genre,
-        COUNT(*) AS Game_Count,
-        ROUND(SUM(Global_Sales), 2) AS Total_Sales
-    FROM games
-    GROUP BY Genre
-    HAVING COUNT(*) >= 1000
-    ORDER BY Total_Sales DESC;
+        SELECT
+            Genre,
+            COUNT(*) AS Game_Count,
+            ROUND(SUM(Global_Sales), 2) AS Total_Sales
+        FROM games
+        GROUP BY Genre
+        HAVING COUNT(*) >= ?
+        ORDER BY Total_Sales DESC;
     """
 
-    result = pd.read_sql_query(
+    return execute_query(
+        connection,
         query,
-        connection
+        (minimum_games,),
     )
 
-    print("\n=== GENRES MIT MINDESTENS 1000 SPIELEN ===")
-    print(result)
 
+# ---------------------------------------------------------------------
+# Publisher and regional queries
+# ---------------------------------------------------------------------
 
-    # ========================================================
-    # ANALYSE 7: TOP 10 PS3-ACTION-SPIELE AB 2010
-    # ========================================================
-
-    # Jetzt verwenden wir mehrere Filterbedingungen.
-    #
-    # WHERE:
-    #   Beginnt unsere Filterung.
-    #
-    # Platform = 'PS3':
-    #   Nur Spiele für PlayStation 3.
-    #
-    # AND Genre = 'Action':
-    #   Zusätzlich nur Action-Spiele.
-    #
-    # AND Year >= 2010:
-    #   Zusätzlich Erscheinungsjahr ab 2010.
-    #
-    # AND:
-    #   Alle Bedingungen müssen gleichzeitig
-    #   erfüllt sein.
-    #
-    # ORDER BY Global_Sales DESC:
-    #   Sortiert nach den Verkaufszahlen.
-    #
-    # LIMIT 10:
-    #   Zeigt maximal zehn Ergebnisse.
+def get_top_publishers(
+    connection: sqlite3.Connection,
+    limit: int = DEFAULT_LIMIT,
+) -> pd.DataFrame:
+    """Return publishers ranked by recorded global sales."""
+    if limit < 1:
+        raise ValueError("The result limit must be positive.")
 
     query = """
-    SELECT
-        Name,
-        Platform,
-        Year,
-        Genre,
-        Global_Sales
-    FROM games
-    WHERE Platform = 'PS3'
-      AND Genre = 'Action'
-      AND Year >= 2010
-    ORDER BY Global_Sales DESC
-    LIMIT 10;
+        SELECT
+            Publisher,
+            COUNT(*) AS Game_Count,
+            ROUND(SUM(Global_Sales), 2) AS Total_Sales
+        FROM games
+        WHERE Publisher IS NOT NULL
+          AND TRIM(Publisher) != ''
+          AND Publisher != 'Unknown'
+        GROUP BY Publisher
+        ORDER BY Total_Sales DESC
+        LIMIT ?;
     """
 
-    result = pd.read_sql_query(
+    return execute_query(
+        connection,
         query,
-        connection
+        (limit,),
     )
 
-    print("\n=== TOP 10 PS3-ACTION-SPIELE AB 2010 ===")
-    print(result)
 
-
-    # ========================================================
-    # ANALYSE 8: TOP 10 PUBLISHER NACH VERKÄUFEN
-    # ========================================================
-
-    # Wir untersuchen, welche Publisher insgesamt
-    # die höchsten Verkaufszahlen haben.
-    #
-    # Publisher:
-    #   Name des Herausgebers.
-    #
-    # COUNT(*):
-    #   Anzahl der Spieleinträge des Publishers.
-    #
-    # SUM(Global_Sales):
-    #   Gesamte weltweite Verkaufszahlen.
-    #
-    # WHERE Publisher != 'Unknown':
-    #   Schließt unbekannte Publisher aus.
-    #
-    # GROUP BY Publisher:
-    #   Fasst alle Einträge desselben Publishers
-    #   zu einer Gruppe zusammen.
-
+def get_regional_sales(
+    connection: sqlite3.Connection,
+) -> pd.DataFrame:
+    """Calculate recorded sales totals for all four regions."""
     query = """
-    SELECT
-        Publisher,
-        COUNT(*) AS Game_Count,
-        ROUND(SUM(Global_Sales), 2) AS Total_Sales
-    FROM games
-    WHERE Publisher != 'Unknown'
-    GROUP BY Publisher
-    ORDER BY Total_Sales DESC
-    LIMIT 10;
+        SELECT
+            ROUND(SUM(NA_Sales), 2) AS North_America,
+            ROUND(SUM(EU_Sales), 2) AS Europe,
+            ROUND(SUM(JP_Sales), 2) AS Japan,
+            ROUND(SUM(Other_Sales), 2) AS Other_Regions
+        FROM games;
     """
 
-    result = pd.read_sql_query(
+    return execute_query(
+        connection,
         query,
-        connection
     )
 
-    print("\n=== TOP 10 PUBLISHER ===")
-    print(result)
 
+# ---------------------------------------------------------------------
+# Report formatting
+# ---------------------------------------------------------------------
 
-    # ========================================================
-    # ANALYSE 9: VERKÄUFE NACH REGION
-    # ========================================================
+def print_report(
+    title: str,
+    results: pd.DataFrame,
+) -> None:
+    """Print a consistently formatted SQL analysis report."""
+    print("\n" + "-" * 60)
+    print(title)
+    print("-" * 60)
 
-    # Wir berechnen die gesamten Verkaufszahlen
-    # für Nordamerika, Europa, Japan und
-    # die übrigen Regionen.
-    #
-    # Hier benötigen wir kein GROUP BY,
-    # weil wir die komplette Tabelle zusammenfassen.
-    #
-    # Jede SUM()-Funktion addiert eine
-    # der regionalen Verkaufsspalten.
+    if results.empty:
+        print("No matching records found.")
+        return
 
-    query = """
-    SELECT
-        ROUND(SUM(NA_Sales), 2) AS North_America,
-        ROUND(SUM(EU_Sales), 2) AS Europe,
-        ROUND(SUM(JP_Sales), 2) AS Japan,
-        ROUND(SUM(Other_Sales), 2) AS Other_Regions
-    FROM games;
-    """
-
-    result = pd.read_sql_query(
-        query,
-        connection
+    print(
+        results.to_string(
+            index=False,
+        )
     )
 
-    print("\n=== VERKÄUFE NACH REGION ===")
-    print(result)
+
+# ---------------------------------------------------------------------
+# Analysis workflow
+# ---------------------------------------------------------------------
+
+def run_analysis(
+    connection: sqlite3.Connection,
+) -> None:
+    """Execute and display the project's nine SQL analyses."""
+    reports = [
+        (
+            "1. FIRST 10 GAME ENTRIES",
+            get_first_games(
+                connection,
+                limit=10,
+            ),
+        ),
+        (
+            "2. TOP 10 PLAYSTATION 2 GAMES",
+            get_top_games_by_platform(
+                connection,
+                platform="PS2",
+                limit=10,
+            ),
+        ),
+        (
+            "3. GLOBAL SALES BY GENRE",
+            get_genre_sales(
+                connection,
+            ),
+        ),
+        (
+            "4. TOP 10 GLOBAL GAME ENTRIES",
+            get_top_global_games(
+                connection,
+                limit=10,
+            ),
+        ),
+        (
+            "5. AVERAGE SALES BY GENRE",
+            get_genre_average_sales(
+                connection,
+            ),
+        ),
+        (
+            "6. GENRES WITH AT LEAST 1,000 GAME ENTRIES",
+            get_genres_with_minimum_games(
+                connection,
+                minimum_games=1000,
+            ),
+        ),
+        (
+            "7. TOP PS3 ACTION GAMES RELEASED SINCE 2010",
+            get_filtered_games(
+                connection,
+                platform="PS3",
+                genre="Action",
+                start_year=2010,
+                limit=10,
+            ),
+        ),
+        (
+            "8. TOP 10 PUBLISHERS BY GLOBAL SALES",
+            get_top_publishers(
+                connection,
+                limit=10,
+            ),
+        ),
+        (
+            "9. RECORDED SALES BY REGION",
+            get_regional_sales(
+                connection,
+            ),
+        ),
+    ]
+
+    for title, results in reports:
+        print_report(
+            title,
+            results,
+        )
 
 
-# ============================================================
-# 6. DATENBANKVERBINDUNG SCHLIESSEN
-# ============================================================
+# ---------------------------------------------------------------------
+# Application entry point
+# ---------------------------------------------------------------------
 
-finally:
+def main() -> None:
+    """Validate the database and run the SQL analysis reports."""
+    print("=" * 60)
+    print("GAME SALES ANALYTICS - SQL ANALYSIS")
+    print("=" * 60)
 
-    # Dieser Abschnitt wird auch ausgeführt,
-    # wenn innerhalb des try-Blocks ein Fehler auftritt.
-    #
-    # close():
-    #   Schließt die Verbindung zur SQLite-Datenbank.
-    #
-    # Dadurch werden Ressourcen freigegeben.
+    connection = connect_database(
+        DATABASE_PATH
+    )
 
-    connection.close()
+    try:
+        validate_database(
+            connection
+        )
 
-    print("\nDatenbankverbindung geschlossen.")
+        run_analysis(
+            connection
+        )
 
+    finally:
+        connection.close()
 
-# ============================================================
-# 7. PROGRAMMENDE
-# ============================================================
+    print("\n" + "=" * 60)
+    print("SQL ANALYSIS COMPLETED SUCCESSFULLY")
+    print("=" * 60)
 
-# Diese Meldung wird nur erreicht,
-# wenn die SQL-Abfragen ohne unbehandelten
-# Fehler abgeschlossen wurden.
-#
-# Bei einem Fehler im try-Block wird zuerst
-# die Verbindung geschlossen und danach
-# der Fehler von Python ausgegeben.
-
-print("\n========================================")
-print("SQL-ANALYSE ERFOLGREICH ABGESCHLOSSEN")
-print("========================================")
+    print(
+        "\nData limitation: Results describe historical "
+        "sales recorded in the dataset, not the complete "
+        "video game market."
+    )
 
 
-# ============================================================
-# ENDE DES MODULS
-# ============================================================
-#
-# Unsere SQL-Analyse kann jetzt:
-#
-# 1. Alle Spiele einer Tabelle anzeigen.
-#
-# 2. Spiele nach Plattform filtern.
-#
-# 3. Verkaufszahlen nach Genre gruppieren.
-#
-# 4. Die erfolgreichsten Spiele ermitteln.
-#
-# 5. Durchschnittliche Verkäufe berechnen.
-#
-# 6. Gruppierte Ergebnisse mit HAVING filtern.
-#
-# 7. Mehrere Bedingungen mit AND kombinieren.
-#
-# 8. Publisher nach Gesamtverkäufen vergleichen.
-#
-# 9. Regionale Verkaufszahlen berechnen.
-#
-# Im nächsten Schritt verwenden wir diese Daten
-# für unser interaktives Streamlit-Dashboard.
-#
-# ============================================================
+if __name__ == "__main__":
+    main()

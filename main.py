@@ -1,761 +1,281 @@
 
-# ============================================================
-# GAME SALES ANALYTICS
-# ============================================================
-#
-# Projekt:
-#   Analyse weltweiter Videospiel-Verkaufszahlen
-#
-# Programmiersprache:
-#   Python
-#
-# Verwendete Bibliotheken:
-#   - pandas: Einlesen, Bereinigen und Analysieren von Daten
-#   - matplotlib: Erstellen und Speichern von Diagrammen
-#   - pathlib: Arbeiten mit Datei- und Ordnerpfaden
-#
-# Aktueller Projektstand:
-#   Schritt 1 bis Schritt 7
-#
-# ============================================================
-
-
-# ============================================================
-# 1. BIBLIOTHEKEN IMPORTIEREN
-# ============================================================
-
-# Pandas ermöglicht uns die Arbeit mit Tabellen (DataFrames).
-#
-# Mit "as pd" geben wir Pandas einen kürzeren Namen.
-
-import pandas as pd
-
-
-# Matplotlib verwenden wir für Diagramme.
-#
-# pyplot enthält Funktionen zum Erstellen,
-# Beschriften und Speichern von Diagrammen.
-
-import matplotlib.pyplot as plt
-
-
-# Path stammt aus der Python-Standardbibliothek.
-#
-# Damit können wir Datei- und Ordnerpfade erstellen,
-# ohne auf Unterschiede zwischen Windows,
-# macOS und Linux achten zu müssen.
+"""Data preparation and exploratory analysis for Game Sales Analytics."""
 
 from pathlib import Path
 
+import matplotlib.pyplot as plt
+import pandas as pd
 
-# ============================================================
-# 2. PROJEKTPFADE FESTLEGEN
-# ============================================================
 
-# __file__:
-#   Enthält den Dateipfad unserer main.py.
-#
-# Path(__file__).resolve():
-#   Ermittelt den absoluten Dateipfad.
-#
-# .parent:
-#   Gibt den übergeordneten Ordner zurück.
-#
-# Da main.py direkt im Projektordner liegt,
-# erhalten wir damit unseren Hauptordner.
-
+# Project paths
 BASE_DIR = Path(__file__).resolve().parent
 
-
-# Pfad zu unserer unveränderten Originaldatei.
-
 RAW_DATA_PATH = BASE_DIR / "data" / "raw" / "vgsales.csv"
-
-
-# Pfad zur späteren bereinigten CSV-Datei.
-
-CLEAN_DATA_PATH = (
-    BASE_DIR / "data" / "processed" / "vgsales_clean.csv"
-)
-
-
-# Speicherordner für unsere Diagramme.
-
+PROCESSED_DIR = BASE_DIR / "data" / "processed"
 IMAGES_DIR = BASE_DIR / "images"
 
+CLEAN_DATA_PATH = PROCESSED_DIR / "vgsales_clean.csv"
+YEAR_DATA_PATH = PROCESSED_DIR / "vgsales_with_year.csv"
+
+
+# Expected dataset schema
+REQUIRED_COLUMNS = [
+    "Rank",
+    "Name",
+    "Platform",
+    "Year",
+    "Genre",
+    "Publisher",
+    "NA_Sales",
+    "EU_Sales",
+    "JP_Sales",
+    "Other_Sales",
+    "Global_Sales",
+]
+
+SALES_COLUMNS = [
+    "NA_Sales",
+    "EU_Sales",
+    "JP_Sales",
+    "Other_Sales",
+    "Global_Sales",
+]
+
+
+def load_dataset(file_path: Path) -> pd.DataFrame:
+    """Load the source dataset and validate its required columns."""
+    if not file_path.is_file():
+        raise FileNotFoundError(
+            f"Source dataset not found: {file_path}"
+        )
+
+    df = pd.read_csv(file_path)
+
+    missing_columns = [
+        column
+        for column in REQUIRED_COLUMNS
+        if column not in df.columns
+    ]
+
+    if missing_columns:
+        raise ValueError(
+            f"Missing required dataset columns: {missing_columns}"
+        )
+
+    if df.empty:
+        raise ValueError("The source dataset is empty.")
+
+    return df
 
-# mkdir():
-#   Erstellt einen Ordner.
-#
-# parents=True:
-#   Erstellt auch übergeordnete Ordner, falls nötig.
-#
-# exist_ok=True:
-#   Verhindert einen Fehler, wenn der Ordner
-#   bereits existiert.
+
+def clean_dataset(df: pd.DataFrame) -> pd.DataFrame:
+    """Clean game records while preserving missing release years."""
+    cleaned = df.copy()
 
-IMAGES_DIR.mkdir(parents=True, exist_ok=True)
+    # Normalize numeric values before validating the dataset.
+    numeric_columns = ["Rank", "Year", *SALES_COLUMNS]
 
-CLEAN_DATA_PATH.parent.mkdir(
-    parents=True,
-    exist_ok=True
-)
+    for column in numeric_columns:
+        cleaned[column] = pd.to_numeric(
+            cleaned[column],
+            errors="coerce",
+        )
 
+    # A valid record requires identifiable game information and sales.
+    required_values = [
+        "Name",
+        "Platform",
+        "Genre",
+        *SALES_COLUMNS,
+    ]
 
-# ============================================================
-# 3. DATENSATZ LADEN
-# ============================================================
+    cleaned = cleaned.dropna(subset=required_values)
 
-print("\n=== DATENSATZ LADEN ===")
+    # Exclude records containing invalid negative sales figures.
+    valid_sales = cleaned[SALES_COLUMNS].ge(0).all(axis=1)
+    cleaned = cleaned.loc[valid_sales].copy()
 
+    # Standardize text fields.
+    text_columns = ["Name", "Platform", "Genre"]
 
-# read_csv():
-#   Liest unsere CSV-Datei ein.
-#
-# Das Ergebnis wird als DataFrame gespeichert.
-#
-# Ein DataFrame ist eine Tabelle, die aus
-# Zeilen und Spalten besteht.
-#
-# Wir speichern die Daten in der Variable "df".
+    for column in text_columns:
+        cleaned[column] = cleaned[column].astype(str).str.strip()
 
-df = pd.read_csv(RAW_DATA_PATH)
+    cleaned = cleaned.loc[
+        cleaned[text_columns].ne("").all(axis=1)
+    ].copy()
+
+    # Retain records whose publisher is not available.
+    cleaned["Publisher"] = (
+        cleaned["Publisher"]
+        .fillna("Unknown")
+        .astype(str)
+        .str.strip()
+        .replace("", "Unknown")
+    )
 
+    # Keep release years nullable instead of dropping entire records.
+    cleaned["Year"] = cleaned["Year"].astype("Int64")
 
-# Ausgabe zur Kontrolle.
+    cleaned = cleaned.drop_duplicates()
 
-print("Datensatz erfolgreich geladen!")
+    return cleaned.reset_index(drop=True)
 
 
-# ============================================================
-# 4. ERSTE FÜNF SPIELE ANZEIGEN
-# ============================================================
+def create_year_dataset(df: pd.DataFrame) -> pd.DataFrame:
+    """Return records with valid release years for temporal analysis."""
+    year_df = df.dropna(subset=["Year"]).copy()
 
-print("\n=== ERSTE 5 SPIELE ===")
+    # The original dataset represents historical game releases.
+    year_df = year_df.loc[
+        year_df["Year"].between(1980, 2016)
+    ].copy()
 
+    year_df["Year"] = year_df["Year"].astype(int)
 
-# head():
-#   Zeigt standardmäßig die ersten fünf Zeilen.
-#
-# Dadurch bekommen wir einen ersten Eindruck
-# von den vorhandenen Daten.
+    return year_df.reset_index(drop=True)
 
-print(df.head())
 
+def print_dataset_summary(
+    original: pd.DataFrame,
+    cleaned: pd.DataFrame,
+    year_data: pd.DataFrame,
+) -> None:
+    """Print dataset quality indicators and basic sales statistics."""
+    print("\n" + "=" * 60)
+    print("GAME SALES ANALYTICS - DATA PREPARATION")
+    print("=" * 60)
 
-# ============================================================
-# 5. GRÖSSE DES DATENSATZES
-# ============================================================
+    print(f"\nOriginal records: {len(original):,}")
+    print(f"Cleaned records: {len(cleaned):,}")
+    print(f"Records with valid release years: {len(year_data):,}")
 
-print("\n=== DATENSATZ-GRÖSSE ===")
+    print("\nMissing values in cleaned dataset:")
+    print(cleaned.isna().sum().to_string())
 
+    print("\nGenre distribution:")
+    print(cleaned["Genre"].value_counts().to_string())
 
-# shape:
-#   Liefert ein Tupel mit zwei Werten.
-#
-# shape[0]:
-#   Anzahl der Zeilen.
-#
-# shape[1]:
-#   Anzahl der Spalten.
-#
-# Bei unserem Datensatz erwarten wir
-# ungefähr 16.598 Zeilen und 11 Spalten.
+    print("\nGlobal sales by genre (million copies):")
 
-print("Anzahl der Spiele:", df.shape[0])
+    genre_sales = (
+        cleaned.groupby("Genre")["Global_Sales"]
+        .sum()
+        .sort_values(ascending=False)
+    )
 
-print("Anzahl der Spalten:", df.shape[1])
+    print(genre_sales.round(2).to_string())
 
+    print("\nNumeric summary:")
+    print(cleaned[SALES_COLUMNS].describe().round(2).to_string())
 
-# ============================================================
-# 6. INFORMATIONEN ÜBER DEN DATENSATZ
-# ============================================================
 
-print("\n=== DATENSATZ-INFORMATIONEN ===")
+def save_genre_charts(df: pd.DataFrame) -> None:
+    """Generate static genre distribution and sales charts."""
+    IMAGES_DIR.mkdir(parents=True, exist_ok=True)
 
+    genre_counts = df["Genre"].value_counts()
 
-# info():
-#   Zeigt verschiedene Informationen an:
-#
-#   - Spaltennamen
-#   - Anzahl vorhandener Werte
-#   - Datentypen
-#   - Speicherverbrauch
-#
-# Wichtige Datentypen:
-#
-# int64:
-#   Ganze Zahlen.
-#
-# float64:
-#   Dezimalzahlen.
-#
-# object:
-#   Häufig Texte beziehungsweise Zeichenketten.
+    genre_sales = (
+        df.groupby("Genre")["Global_Sales"]
+        .sum()
+        .sort_values(ascending=False)
+    )
 
-df.info()
+    # Game-platform entry counts by genre.
+    fig, ax = plt.subplots(figsize=(12, 6))
 
+    ax.bar(
+        genre_counts.index,
+        genre_counts.values,
+        color="steelblue",
+    )
 
-# ============================================================
-# 7. STATISTISCHE ZUSAMMENFASSUNG
-# ============================================================
+    ax.set(
+        title="Game Entries by Genre",
+        xlabel="Genre",
+        ylabel="Number of Game Entries",
+    )
 
-print("\n=== STATISTISCHE ZUSAMMENFASSUNG ===")
+    ax.tick_params(axis="x", rotation=45)
+    fig.tight_layout()
 
+    fig.savefig(
+        IMAGES_DIR / "genre_counts.png",
+        dpi=300,
+    )
 
-# describe():
-#   Erstellt statistische Kennzahlen
-#   für unsere numerischen Spalten.
-#
-# count:
-#   Anzahl vorhandener Werte.
-#
-# mean:
-#   Durchschnitt.
-#
-# std:
-#   Standardabweichung.
-#
-# min:
-#   Kleinster Wert.
-#
-# 25%, 50%, 75%:
-#   Quartile der Datenverteilung.
-#
-# max:
-#   Größter Wert.
+    plt.close(fig)
 
-print(df.describe())
+    # Historical global sales aggregated by genre.
+    fig, ax = plt.subplots(figsize=(12, 6))
 
+    ax.bar(
+        genre_sales.index,
+        genre_sales.values,
+        color="seagreen",
+    )
 
-# ============================================================
-# 8. ANZAHL VERSCHIEDENER GENRES
-# ============================================================
+    ax.set(
+        title="Historical Global Sales by Genre",
+        xlabel="Genre",
+        ylabel="Sales (Million Copies)",
+    )
 
-print("\n=== ANZAHL DER GENRES ===")
+    ax.tick_params(axis="x", rotation=45)
+    fig.tight_layout()
 
+    fig.savefig(
+        IMAGES_DIR / "genre_sales.png",
+        dpi=300,
+    )
 
-# df["Genre"]:
-#   Wählt die Spalte "Genre" aus.
-#
-# nunique():
-#   Zählt die unterschiedlichen Werte.
-#
-# Unser Datensatz enthält 12 Genres.
+    plt.close(fig)
 
-genre_count = df["Genre"].nunique()
 
+def save_processed_datasets(
+    cleaned: pd.DataFrame,
+    year_data: pd.DataFrame,
+) -> None:
+    """Persist the cleaned datasets for downstream processing."""
+    PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
 
-# Ergebnis ausgeben.
+    cleaned.to_csv(
+        CLEAN_DATA_PATH,
+        index=False,
+    )
 
-print("Anzahl verschiedener Genres:", genre_count)
+    year_data.to_csv(
+        YEAR_DATA_PATH,
+        index=False,
+    )
 
 
-# ============================================================
-# 9. ANZAHL DER SPIELE PRO GENRE
-# ============================================================
+def main() -> None:
+    """Run the complete data preparation and exploratory analysis."""
+    original = load_dataset(RAW_DATA_PATH)
 
-print("\n=== SPIELE PRO GENRE ===")
+    cleaned = clean_dataset(original)
+    year_data = create_year_dataset(cleaned)
 
+    print_dataset_summary(
+        original=original,
+        cleaned=cleaned,
+        year_data=year_data,
+    )
 
-# value_counts():
-#   Zählt, wie häufig jeder Wert vorkommt.
-#
-# In unserem Fall:
-#   Wie viele Spiele gehören zu jedem Genre?
-#
-# Die Werte werden automatisch absteigend sortiert.
-#
-# Das Genre mit den meisten Spielen steht oben.
+    save_processed_datasets(
+        cleaned=cleaned,
+        year_data=year_data,
+    )
 
-genre_counts = df["Genre"].value_counts()
+    save_genre_charts(cleaned)
 
+    print("\nData preparation completed successfully.")
+    print(f"Cleaned dataset: {CLEAN_DATA_PATH}")
+    print(f"Release-year dataset: {YEAR_DATA_PATH}")
+    print(f"Charts directory: {IMAGES_DIR}")
 
-# Ergebnis ausgeben.
 
-print(genre_counts)
-
-
-# ============================================================
-# 10. TOP 5 GENRES
-# ============================================================
-
-print("\n=== TOP 5 GENRES ===")
-
-
-# head(5):
-#   Zeigt nur die ersten fünf Einträge.
-#
-# Da unsere Genres bereits nach Häufigkeit
-# sortiert sind, erhalten wir die Top 5.
-
-print(genre_counts.head(5))
-
-
-# ============================================================
-# 11. DIAGRAMM: ANZAHL DER SPIELE PRO GENRE
-# ============================================================
-
-# figure():
-#   Erstellt eine neue Zeichenfläche.
-#
-# figsize=(12, 6):
-#   Breite: 12 Zoll
-#   Höhe:    6 Zoll
-
-plt.figure(figsize=(12, 6))
-
-
-# bar():
-#   Erstellt ein vertikales Balkendiagramm.
-#
-# genre_counts.index:
-#   Enthält die Namen der Genres.
-#
-# genre_counts.values:
-#   Enthält die Anzahl der Spiele.
-#
-# color:
-#   Bestimmt die Farbe der Balken.
-
-plt.bar(
-    genre_counts.index,
-    genre_counts.values,
-    color="steelblue"
-)
-
-
-# Titel und Achsenbeschriftungen.
-
-plt.title("Anzahl der Spiele pro Genre")
-
-plt.xlabel("Genre")
-
-plt.ylabel("Anzahl der Spiele")
-
-
-# xticks():
-#   Verändert die Beschriftungen der X-Achse.
-#
-# rotation=45:
-#   Dreht die Genre-Namen um 45 Grad.
-#
-# ha="right":
-#   Richtet die Beschriftungen rechtsbündig aus.
-
-plt.xticks(rotation=45, ha="right")
-
-
-# tight_layout():
-#   Optimiert automatisch die Abstände.
-
-plt.tight_layout()
-
-
-# savefig():
-#   Speichert unser Diagramm als Bild.
-#
-# dpi=300:
-#   Sorgt für eine hohe Auflösung.
-
-plt.savefig(
-    IMAGES_DIR / "genre_counts.png",
-    dpi=300
-)
-
-
-# close():
-#   Schließt die Matplotlib-Zeichenfläche.
-#
-# Dadurch wird kein Diagrammfenster geöffnet.
-#
-# Außerdem werden Ressourcen freigegeben.
-#
-# Wir verwenden absichtlich nicht plt.show(),
-# da sonst mehrere Fenster erscheinen würden.
-
-plt.close()
-
-
-print("\nDiagramm gespeichert: genre_counts.png")
-
-
-# ============================================================
-# 12. WELTWEITE VERKÄUFE NACH GENRE
-# ============================================================
-
-print("\n=== WELTWEITE VERKÄUFE NACH GENRE ===")
-
-
-# Wir untersuchen jetzt die Verkaufszahlen.
-#
-# groupby("Genre"):
-#   Gruppiert alle Spiele nach Genre.
-#
-# ["Global_Sales"]:
-#   Wählt die weltweiten Verkaufszahlen aus.
-#
-# sum():
-#   Addiert die Verkäufe innerhalb jedes Genres.
-#
-# sort_values(ascending=False):
-#   Sortiert die Ergebnisse absteigend.
-#
-# Die Verkaufszahlen sind in Millionen
-# verkauften Exemplaren angegeben.
-
-genre_sales = (
-    df.groupby("Genre")["Global_Sales"]
-    .sum()
-    .sort_values(ascending=False)
-)
-
-
-# Ergebnis ausgeben.
-
-print(genre_sales)
-
-
-# ============================================================
-# 13. DIAGRAMM: WELTWEITE VERKÄUFE NACH GENRE
-# ============================================================
-
-# Neue Zeichenfläche erstellen.
-
-plt.figure(figsize=(12, 6))
-
-
-# Balkendiagramm erstellen.
-#
-# X-Achse:
-#   Genres.
-#
-# Y-Achse:
-#   Weltweite Verkäufe in Millionen.
-
-plt.bar(
-    genre_sales.index,
-    genre_sales.values,
-    color="seagreen"
-)
-
-
-# Diagramm beschriften.
-
-plt.title("Weltweite Verkäufe nach Genre")
-
-plt.xlabel("Genre")
-
-plt.ylabel("Verkäufe in Millionen")
-
-
-# Beschriftungen drehen.
-
-plt.xticks(rotation=45, ha="right")
-
-
-# Layout optimieren.
-
-plt.tight_layout()
-
-
-# Diagramm als PNG speichern.
-
-plt.savefig(
-    IMAGES_DIR / "genre_sales.png",
-    dpi=300
-)
-
-
-# Zeichenfläche schließen.
-
-plt.close()
-
-
-print("Diagramm gespeichert: genre_sales.png")
-
-
-# ============================================================
-# 14. FEHLENDE WERTE UNTERSUCHEN
-# ============================================================
-
-print("\n=== FEHLENDE WERTE ===")
-
-
-# isnull():
-#   Prüft jede Zelle auf fehlende Werte.
-#
-# Fehlender Wert:
-#   True.
-#
-# Vorhandener Wert:
-#   False.
-#
-# sum():
-#   Zählt die True-Werte pro Spalte.
-#
-# So finden wir heraus, in welchen Spalten
-# Daten fehlen.
-
-missing_values = df.isnull().sum()
-
-
-# Ergebnisse anzeigen.
-
-print(missing_values)
-
-
-# ============================================================
-# 15. KOPIE FÜR DIE DATENBEREINIGUNG ERSTELLEN
-# ============================================================
-
-print("\n=== DATENBEREINIGUNG STARTEN ===")
-
-
-# copy():
-#   Erstellt eine unabhängige Kopie.
-#
-# Dadurch bleibt unser Original-DataFrame
-# in der Variable "df" unverändert.
-#
-# Die bereinigten Daten werden in
-# der Variable "df_clean" gespeichert.
-
-df_clean = df.copy()
-
-
-# ============================================================
-# 16. FEHLENDE ERSCHEINUNGSJAHRE ENTFERNEN
-# ============================================================
-
-# dropna():
-#   Entfernt Zeilen mit fehlenden Werten.
-#
-# subset=["Year"]:
-#   Berücksichtigt dabei ausschließlich
-#   die Spalte "Year".
-#
-# Spiele ohne Erscheinungsjahr werden entfernt.
-#
-# Wichtig:
-#   Diese bereinigte Version eignet sich
-#   besonders für zeitbasierte Analysen.
-#
-# Für Analysen ohne Jahresbezug können wir
-# weiterhin den vollständigen Datensatz nutzen.
-
-df_clean = df_clean.dropna(subset=["Year"])
-
-
-# Anzahl der verbliebenen Spiele ausgeben.
-
-print(
-    "Spiele nach Entfernung fehlender Jahre:",
-    df_clean.shape[0]
-)
-
-
-# ============================================================
-# 17. DATENTYP DER ERSCHEINUNGSJAHRE KORRIGIEREN
-# ============================================================
-
-print("\n=== DATENTYPEN KORRIGIEREN ===")
-
-
-# dtype:
-#   Zeigt den aktuellen Datentyp.
-#
-# Wegen fehlender Jahreswerte verwendet Pandas
-# ursprünglich häufig float64.
-
-print("Datentyp vorher:", df_clean["Year"].dtype)
-
-
-# astype(int):
-#   Wandelt Werte in ganze Zahlen um.
-#
-# Beispiel:
-#   2006.0 wird zu 2006.
-#
-# Das funktioniert hier, weil wir zuvor
-# alle fehlenden Jahreswerte entfernt haben
-# und die vorhandenen Jahreswerte ganzzahlig sind.
-
-df_clean["Year"] = df_clean["Year"].astype(int)
-
-
-# Neuen Datentyp ausgeben.
-
-print("Datentyp nachher:", df_clean["Year"].dtype)
-
-
-# ============================================================
-# 18. DUPLIKATE UNTERSUCHEN
-# ============================================================
-
-print("\n=== DUPLIKATE UNTERSUCHEN ===")
-
-
-# duplicated():
-#   Erkennt mehrfach vorhandene Zeilen.
-#
-# Standardmäßig werden alle Spalten verglichen.
-#
-# Die erste Zeile bleibt unmarkiert.
-# Jede weitere identische Zeile wird
-# als Duplikat erkannt.
-#
-# sum():
-#   Zählt alle erkannten Duplikate.
-
-duplicates = df_clean.duplicated().sum()
-
-
-# Anzahl ausgeben.
-
-print("Gefundene Duplikate:", duplicates)
-
-
-# drop_duplicates():
-#   Entfernt vollständig identische Zeilen.
-#
-# Wir vergleichen bewusst alle Spalten.
-#
-# Zwei Spiele mit demselben Namen sind
-# nicht automatisch Duplikate.
-#
-# Ein Spiel kann beispielsweise auf
-# verschiedenen Plattformen erscheinen.
-
-df_clean = df_clean.drop_duplicates()
-
-
-# Noch einmal prüfen.
-
-print(
-    "Duplikate nach Bereinigung:",
-    df_clean.duplicated().sum()
-)
-
-
-# ============================================================
-# 19. FEHLENDE PUBLISHER BEHANDELN
-# ============================================================
-
-print("\n=== FEHLENDE PUBLISHER BEHANDELN ===")
-
-
-# Zunächst zählen wir fehlende Publisher.
-
-missing_publishers = df_clean["Publisher"].isnull().sum()
-
-
-# Anzahl vor der Bereinigung.
-
-print("Fehlende Publisher vorher:", missing_publishers)
-
-
-# fillna():
-#   Ersetzt fehlende Werte.
-#
-# Hier ersetzen wir fehlende Publisher
-# durch den Text "Unknown".
-#
-# Dadurch bleiben die entsprechenden
-# Verkaufsdaten erhalten.
-#
-# "Unknown" bedeutet dabei nur,
-# dass der Publisher nicht bekannt ist.
-
-df_clean["Publisher"] = (
-    df_clean["Publisher"].fillna("Unknown")
-)
-
-
-# Erneut überprüfen.
-
-print(
-    "Fehlende Publisher nachher:",
-    df_clean["Publisher"].isnull().sum()
-)
-
-
-# ============================================================
-# 20. DATENBEREINIGUNG KONTROLLIEREN
-# ============================================================
-
-print("\n=== VERGLEICH DER DATENSÄTZE ===")
-
-
-# Anzahl der Zeilen vor der Bereinigung.
-
-original_rows = df.shape[0]
-
-
-# Anzahl der Zeilen nach der Bereinigung.
-
-clean_rows = df_clean.shape[0]
-
-
-# Differenz berechnen.
-#
-# Dadurch erfahren wir, wie viele Zeilen
-# insgesamt entfernt wurden.
-
-removed_rows = original_rows - clean_rows
-
-
-# Ergebnisse ausgeben.
-
-print("Spiele vorher:", original_rows)
-
-print("Spiele nachher:", clean_rows)
-
-print("Entfernte Zeilen:", removed_rows)
-
-
-# ============================================================
-# 21. BEREINIGTE DATEN SPEICHERN
-# ============================================================
-
-print("\n=== BEREINIGTE DATEN SPEICHERN ===")
-
-
-# to_csv():
-#   Speichert einen DataFrame als CSV-Datei.
-#
-# CLEAN_DATA_PATH:
-#   Enthält den vollständigen Speicherpfad:
-#
-#   data/processed/vgsales_clean.csv
-#
-# index=False:
-#   Verhindert, dass Pandas zusätzliche
-#   DataFrame-Zeilennummern in die CSV schreibt.
-#
-# Die ursprüngliche Datei im Ordner "raw"
-# bleibt dabei unverändert.
-
-df_clean.to_csv(
-    CLEAN_DATA_PATH,
-    index=False
-)
-
-
-# Bestätigung ausgeben.
-
-print("Bereinigte CSV-Datei erfolgreich gespeichert!")
-
-print("Dateipfad:", CLEAN_DATA_PATH)
-
-
-# ============================================================
-# 22. PROGRAMM ABSCHLIESSEN
-# ============================================================
-
-print("\n========================================")
-print("GAME SALES ANALYTICS")
-print("ALLE ANALYSEN ERFOLGREICH ABGESCHLOSSEN")
-print("========================================")
-
-
+if __name__ == "__main__":
+    main()
